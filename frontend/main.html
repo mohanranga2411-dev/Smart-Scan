@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Scan - Real-Time RF Spectrum Analyzer</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        rfDark: '#0b0f19',
+                        rfCard: '#131b2e',
+                        rfBorder: '#1f293d',
+                        rfGreen: '#10b981',
+                        rfRed: '#ef4444',
+                        rfAccent: '#3b82f6',
+                        rfYellow: '#f59e0b',
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- FontAwesome for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body {
+            background-color: #0b0f19;
+            color: #e2e8f0;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+        }
+        /* Custom scrollbar styling */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #131b2e;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #2a3756;
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #3b82f6;
+        }
+        /* Custom Glowing Pulse Animations */
+        @keyframes scanPulse {
+            0% { box-shadow: 0 0 0px rgba(16, 185, 129, 0.4); }
+            50% { box-shadow: 0 0 12px rgba(16, 185, 129, 0.8); }
+            100% { box-shadow: 0 0 0px rgba(16, 185, 129, 0.4); }
+        }
+        .active-scan-glow {
+            animation: scanPulse 2s infinite;
+        }
+    </style>
+</head>
+<body class="min-h-screen p-4 md:p-6 flex flex-col gap-6">
+
+    <header class="flex flex-col md:flex-row justify-between items-start md:items-center bg-rfCard p-4 rounded-xl border border-rfBorder shadow-lg gap-4">
+        <div class="flex items-center gap-3">
+            <div class="p-3 bg-rfAccent/10 border border-rfAccent/30 rounded-lg text-rfAccent">
+                <i class="fa-solid fa-wave-square fa-xl"></i>
+            </div>
+            <div>
+                <h1 class="text-xl font-bold text-white tracking-wide">SMART SCAN <span class="text-xs font-semibold px-2 py-0.5 rounded bg-rfAccent/20 text-rfAccent border border-rfAccent/30 ml-2">RF Engine v1.0</span></h1>
+                <p class="text-xs text-gray-400">Real-Time RF Spectrum Analyzer & Dynamic AI Scanner Bridge</p>
+            </div>
+        </div>
+
+        <!-- WebSocket & Scan Controls -->
+        <div class="flex flex-wrap items-center gap-3 w-full md:w-auto">
+            <div class="flex items-center gap-2 bg-rfDark/60 px-3 py-2 rounded-lg border border-rfBorder text-xs">
+                <span id="wsStatusDot" class="w-2.5 h-2.5 rounded-full bg-rfRed inline-block"></span>
+                <span id="wsStatusText" class="font-mono text-gray-300">Disconnected</span>
+            </div>
+
+            <input id="wsUrlInput" type="text" value="ws://127.0.0.1:8000/ws/scan" class="bg-rfDark text-gray-200 text-xs px-3 py-2 rounded-lg border border-rfBorder focus:outline-none focus:border-rfAccent w-48 font-mono">
+
+            <button id="connectBtn" onclick="toggleWebSocketConnection()" class="px-4 py-2 bg-rfAccent hover:bg-blue-600 text-white rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 shadow-md">
+                <i class="fa-solid fa-plug"></i> <span id="connectBtnText">Connect</span>
+            </button>
+
+            <button id="scanBtn" onclick="toggleScanning()" disabled class="px-4 py-2 bg-rfGreen hover:bg-emerald-600 disabled:opacity-40 disabled:hover:bg-rfGreen text-white rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 shadow-md">
+                <i class="fa-solid fa-play" id="scanBtnIcon"></i> <span id="scanBtnText">Start Scan</span>
+            </button>
+        </div>
+    </header>
+
+    <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <div class="bg-rfCard p-4 rounded-xl border border-rfBorder shadow-sm">
+            <span class="text-xs text-gray-400 font-medium">Simulation Clock</span>
+            <div class="text-xl font-mono font-bold text-white mt-1" id="statTime">0.00 <span class="text-xs text-gray-500 font-normal">s</span></div>
+        </div>
+        <div class="bg-rfCard p-4 rounded-xl border border-rfBorder shadow-sm">
+            <span class="text-xs text-gray-400 font-medium">Selected Band</span>
+            <div class="text-xl font-mono font-bold text-rfAccent mt-1" id="statBand">-- / 100</div>
+        </div>
+        <div class="bg-rfCard p-4 rounded-xl border border-rfBorder shadow-sm">
+            <span class="text-xs text-gray-400 font-medium">Signal Hit Count</span>
+            <div class="text-xl font-mono font-bold text-rfGreen mt-1" id="statHits">0</div>
+        </div>
+        <div class="bg-rfCard p-4 rounded-xl border border-rfBorder shadow-sm">
+            <span class="text-xs text-gray-400 font-medium">Signal Strength</span>
+            <div class="text-xl font-mono font-bold text-rfYellow mt-1" id="statPower">0.00</div>
+        </div>
+        <div class="bg-rfCard p-4 rounded-xl border border-rfBorder shadow-sm col-span-2 md:col-span-1 flex flex-col justify-between">
+            <div class="flex justify-between items-center">
+                <span class="text-xs text-gray-400 font-medium">Sweep Interval</span>
+                <span id="speedValueText" class="text-xs font-mono text-rfAccent font-bold">100 ms</span>
+            </div>
+            <input type="range" id="speedSlider" min="20" max="500" step="10" value="100" oninput="updateSpeedDisplay(this.value)" class="w-full accent-rfAccent cursor-pointer mt-2">
+        </div>
+    </div>
+
+    <div class="bg-rfCard p-5 rounded-xl border border-rfBorder shadow-lg flex flex-col gap-4">
+        <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-rfBorder/60 pb-3">
+            <div class="flex items-center gap-2">
+                <i class="fa-solid fa-chart-simple text-rfAccent"></i>
+                <h2 class="text-sm font-bold text-white uppercase tracking-wider">100-Band Spectrum Heatmap & Power Distribution</h2>
+            </div>
+            <div class="flex items-center gap-4 text-xs">
+                <div class="flex items-center gap-1.5"><span class="w-3 h-3 rounded bg-rfDark border border-rfBorder inline-block"></span> Quiet</div>
+                <div class="flex items-center gap-1.5"><span class="w-3 h-3 rounded bg-rfYellow inline-block"></span> Active Scan</div>
+                <div class="flex items-center gap-1.5"><span class="w-3 h-3 rounded bg-rfGreen inline-block"></span> Signal Detected</div>
+            </div>
+        </div>
+
+        <!-- 100-Band Visualizer Canvas Container -->
+        <div class="relative w-full h-64 bg-rfDark/80 rounded-lg border border-rfBorder/80 p-2 overflow-hidden">
+            <canvas id="spectrumCanvas" class="w-full h-full block"></canvas>
+        </div>
+    </div>
+
+    <div class="bg-rfCard p-5 rounded-xl border border-rfBorder shadow-lg flex flex-col gap-4">
+        <div class="flex justify-between items-center border-b border-rfBorder/60 pb-3">
+            <div class="flex items-center gap-2">
+                <i class="fa-solid fa-list-check text-rfAccent"></i>
+                <h2 class="text-sm font-bold text-white uppercase tracking-wider">Live Signal Telemetry Log</h2>
+            </div>
+            <button onclick="clearTelemetryLog()" class="text-xs text-gray-400 hover:text-white transition-colors flex items-center gap-1">
+                <i class="fa-solid fa-trash-can"></i> Clear Log
+            </button>
+        </div>
+
+        <div class="overflow-x-auto rounded-lg border border-rfBorder/60">
+            <table class="w-full text-left border-collapse text-xs">
+                <thead class="bg-rfDark/80 text-gray-400 font-mono border-b border-rfBorder">
+                    <tr>
+                        <th class="p-3">TIME (S)</th>
+                        <th class="p-3">BAND</th>
+                        <th class="p-3">HIT DETECTED</th>
+                        <th class="p-3">CONFIDENCE</th>
+                        <th class="p-3">SIGNAL POWER</th>
+                        <th class="p-3">DWELL TIME</th>
+                    </tr>
+                </thead>
+                <tbody id="telemetryTableBody" class="font-mono divide-y divide-rfBorder/40 text-gray-300">
+                    <tr id="emptyRow" class="text-center text-gray-500 py-8">
+                        <td colspan="6" class="p-6">No scan data received. Connect WebSocket and start scanning.</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        // System state variables
+        let ws = null;
+        let isScanning = false;
+        let scanIntervalId = null;
+        let totalHits = 0;
+
+        // Band power history (100 bands)
+        const totalBands = 100;
+        const bandPowerMap = new Array(totalBands).fill(0.0);
+        const bandHitMap = new Array(totalBands).fill(false);
+        let activeSelectedBand = -1;
+
+        // AI Sweeper logic local fallback state
+        let currentSweepBand = 0;
+
+        // Canvas element setup
+        const canvas = document.getElementById('spectrumCanvas');
+        const ctx = canvas.getContext('2d');
+
+        function resizeCanvas() {
+            canvas.width = canvas.parentElement.clientWidth;
+            canvas.height = canvas.parentElement.clientHeight;
+            drawSpectrum();
+        }
+        window.addEventListener('resize', resizeCanvas);
+
+        function drawSpectrum() {
+            if (!ctx) return;
+            const width = canvas.width;
+            const height = canvas.height;
+
+            // Clear Background
+            ctx.fillStyle = '#0b0f19';
+            ctx.fillRect(0, 0, width, height);
+
+            // Draw Frequency Grid Lines
+            ctx.strokeStyle = 'rgba(31, 41, 61, 0.5)';
+            ctx.lineWidth = 1;
+            for (let i = 0; i <= 10; i++) {
+                const x = (width / 10) * i;
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, height);
+                ctx.stroke();
+
+                const y = (height / 5) * i;
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(width, y);
+                ctx.stroke();
+            }
+
+            // Draw Bars for 100 Bands
+            const barWidth = width / totalBands;
+            for (let b = 0; b < totalBands; b++) {
+                const power = bandPowerMap[b];
+                const barHeight = Math.max(4, power * (height - 30));
+                const x = b * barWidth;
+                const y = height - barHeight;
+
+                if (b === activeSelectedBand) {
+                    // Highlight selected scanning band
+                    ctx.fillStyle = '#f59e0b';
+                    ctx.shadowColor = '#f59e0b';
+                    ctx.shadowBlur = 10;
+                } else if (bandHitMap[b]) {
+                    // Active signal hit detected
+                    ctx.fillStyle = '#10b981';
+                    ctx.shadowColor = '#10b981';
+                    ctx.shadowBlur = 6;
+                } else {
+                    // Idle band state
+                    ctx.fillStyle = 'rgba(59, 130, 246, 0.3)';
+                    ctx.shadowBlur = 0;
+                }
+
+                ctx.fillRect(x + 1, y, Math.max(1, barWidth - 2), barHeight);
+                ctx.shadowBlur = 0; // Reset shadow
+            }
+        }
+
+        function toggleWebSocketConnection() {
+            const url = document.getElementById('wsUrlInput').value;
+
+            if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+                // Close connection
+                stopScanning();
+                ws.close();
+            } else {
+                // Connect to server
+                updateWsStatus("Connecting...", "bg-rfYellow", false);
+                
+                try {
+                    ws = new WebSocket(url);
+
+                    ws.onopen = () => {
+                        updateWsStatus("Connected", "bg-rfGreen", true);
+                        document.getElementById('scanBtn').disabled = false;
+                        document.getElementById('connectBtnText').innerText = "Disconnect";
+                    };
+
+                    ws.onmessage = (event) => {
+                        const observation = JSON.parse(event.data);
+                        handleObservation(observation);
+                    };
+
+                    ws.onerror = (err) => {
+                        console.error("WebSocket Error:", err);
+                        updateWsStatus("Connection Error", "bg-rfRed", false);
+                    };
+
+                    ws.onclose = () => {
+                        updateWsStatus("Disconnected", "bg-rfRed", false);
+                        stopScanning();
+                        document.getElementById('scanBtn').disabled = true;
+                        document.getElementById('connectBtnText').innerText = "Connect";
+                    };
+                } catch (err) {
+                    alert("Failed to connect to WebSocket endpoint: " + err.message);
+                    updateWsStatus("Disconnected", "bg-rfRed", false);
+                }
+            }
+        }
+
+        function updateWsStatus(text, dotColorClass, isConnected) {
+            document.getElementById('wsStatusText').innerText = text;
+            const dot = document.getElementById('wsStatusDot');
+            dot.className = `w-2.5 h-2.5 rounded-full inline-block ${dotColorClass}`;
+        }
+
+        function toggleScanning() {
+            if (isScanning) {
+                stopScanning();
+            } else {
+                startScanning();
+            }
+        }
+
+        function startScanning() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+            isScanning = true;
+
+            const scanBtn = document.getElementById('scanBtn');
+            scanBtn.className = "px-4 py-2 bg-rfRed hover:bg-red-600 text-white rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 shadow-md active-scan-glow";
+            document.getElementById('scanBtnText').innerText = "Stop Scan";
+            document.getElementById('scanBtnIcon').className = "fa-solid fa-square";
+
+            const intervalMs = parseInt(document.getElementById('speedSlider').value);
+            scanIntervalId = setInterval(executeScanStep, intervalMs);
+        }
+
+        function stopScanning() {
+            isScanning = false;
+            if (scanIntervalId) {
+                clearInterval(scanIntervalId);
+                scanIntervalId = null;
+            }
+
+            const scanBtn = document.getElementById('scanBtn');
+            scanBtn.className = "px-4 py-2 bg-rfGreen hover:bg-emerald-600 disabled:opacity-40 disabled:hover:bg-rfGreen text-white rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 shadow-md";
+            document.getElementById('scanBtnText').innerText = "Start Scan";
+            document.getElementById('scanBtnIcon').className = "fa-solid fa-play";
+        }
+
+        function executeScanStep() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+            // Simple client-side scanning decision algorithm
+            const action = {
+                "next_band": currentSweepBand,
+                "dwell_time": 0.10
+            };
+
+            // Prepare next band sweep index
+            currentSweepBand = (currentSweepBand + 3) % totalBands;
+
+            // Send action to backend AI / Receiver pipeline
+            ws.send(JSON.stringify(action));
+        }
+
+        function handleObservation(obs) {
+            // Update Stat Displays
+            document.getElementById('statTime').innerText = obs.timestamp.toFixed(2);
+            document.getElementById('statBand').innerText = `${obs.selected_band} / 100`;
+            document.getElementById('statPower').innerText = obs.signal_strength.toFixed(2);
+
+            if (obs.hit) {
+                totalHits++;
+                document.getElementById('statHits').innerText = totalHits;
+            }
+
+            // Update spectrum heat maps
+            activeSelectedBand = obs.selected_band;
+            bandPowerMap[obs.selected_band] = obs.signal_strength;
+            bandHitMap[obs.selected_band] = obs.hit;
+
+            drawSpectrum();
+            addTelemetryRow(obs);
+        }
+
+        function addTelemetryRow(obs) {
+            const tbody = document.getElementById('telemetryTableBody');
+            
+            // Remove placeholder row if present
+            const emptyRow = document.getElementById('emptyRow');
+            if (emptyRow) emptyRow.remove();
+
+            const tr = document.createElement('tr');
+            tr.className = obs.hit ? "bg-rfGreen/10 hover:bg-rfGreen/20 transition-colors" : "hover:bg-rfDark/40 transition-colors";
+
+            const hitBadge = obs.hit 
+                ? `<span class="px-2 py-0.5 rounded bg-rfGreen/20 text-rfGreen border border-rfGreen/40 text-[10px] font-bold">HIT</span>` 
+                : `<span class="px-2 py-0.5 rounded bg-gray-700/40 text-gray-400 text-[10px]">CLEAR</span>`;
+
+            const confidencePercent = Math.round(obs.confidence * 100);
+
+            tr.innerHTML = `
+                <td class="p-3 text-gray-400">${obs.timestamp.toFixed(2)}s</td>
+                <td class="p-3 font-bold text-rfAccent">Band ${obs.selected_band}</td>
+                <td class="p-3">${hitBadge}</td>
+                <td class="p-3">
+                    <div class="flex items-center gap-2">
+                        <div class="w-16 bg-rfDark rounded-full h-1.5 border border-rfBorder overflow-hidden">
+                            <div class="bg-rfAccent h-full" style="width: ${confidencePercent}%"></div>
+                        </div>
+                        <span>${confidencePercent}%</span>
+                    </div>
+                </td>
+                <td class="p-3 text-rfYellow font-bold">${obs.signal_strength.toFixed(2)}</td>
+                <td class="p-3 text-gray-400">${obs.duration_estimate.toFixed(2)}s</td>
+            `;
+
+            // Insert new observations at top of table
+            tbody.insertBefore(tr, tbody.firstChild);
+
+            // Cap visible table log at 25 rows
+            if (tbody.children.length > 25) {
+                tbody.removeChild(tbody.lastChild);
+            }
+        }
+
+        function clearTelemetryLog() {
+            const tbody = document.getElementById('telemetryTableBody');
+            tbody.innerHTML = `
+                <tr id="emptyRow" class="text-center text-gray-500 py-8">
+                    <td colspan="6" class="p-6">Log cleared. Active scan streaming ongoing.</td>
+                </tr>
+            `;
+            totalHits = 0;
+            document.getElementById('statHits').innerText = "0";
+        }
+
+        function updateSpeedDisplay(val) {
+            document.getElementById('speedValueText').innerText = `${val} ms`;
+            if (isScanning) {
+                // Restart interval with new speed configuration
+                clearInterval(scanIntervalId);
+                scanIntervalId = setInterval(executeScanStep, parseInt(val));
+            }
+        }
+
+        // Initialize canvas layout on load
+        window.onload = () => {
+            resizeCanvas();
+        };
+    </script>
+</body>
+</html>
